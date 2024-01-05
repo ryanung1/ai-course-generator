@@ -1,21 +1,198 @@
-import { Configuration, OpenAIApi } from "openai";
- 
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-const openai = new OpenAIApi(configuration);
+// import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
+const openai = new OpenAI();
+
+// const configuration = new Configuration({
+//   apiKey: process.env.OPENAI_API_KEY,
+// });
+// const openai = new OpenAIApi(configuration);
  
 interface OutputFormat {
   [key: string]: string | string[] | OutputFormat;
+}[]
+
+type OutputQuestions =  Array<{
+  question: string,
+  answer: string,
+  option1: string,
+  option2: string,
+  option3: string,
+}>
+
+function replaceQuotesInContent(jsonString: string) {
+  // Use a regular expression to identify key-value pairs and replace quotes in the content
+  const modifiedJsonString = jsonString.replace(/"([^"]+)":\s*"([^"]+)"/g, (_, key, content) => `"${key}": "${content.replace(/"/g, "'")}"`);
+
+  return modifiedJsonString;
 }
- 
+
+export async function question_output(
+  system_prompt: string,
+  user_prompt: string | string[],
+  output_format: OutputQuestions,
+  model: string = "gpt-3.5-turbo-1106",
+
+){
+  let output_format_prompt: string = `\nYou are to output
+          an array of objects where each question (along with the answer and the different options) represents an object in an array. It should be in the following json format: ${JSON.stringify(
+          output_format)}. \nDo not put quotation marks or escape character \\ in the output fields.`
+  try {
+    
+    const response = await openai.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: system_prompt + output_format_prompt,
+        },
+        { role: "user", content: user_prompt.toString() },
+      ],
+      model: model,
+      response_format: { "type": "json_object" },
+    });
+  
+    let res: string = 
+    `${response.choices[0].message?.content}`
+    // console.log(res)
+    // response.choices[0].message?.content?.replace(/'/g, '"') ?? "";
+    // const jsonString = replaceQuotesInContent(res)
+    // console.log("Replace all doubles with single quotes: ", jsonString)
+    const questionOutput = JSON.parse(res)
+
+    if(questionOutput.hasOwnProperty("questions")) {
+      let output = questionOutput["questions"]
+      return output
+    } else {
+      let output = []
+      output.push(questionOutput)
+      return output
+    }
+
+    // console.log("SYSTEM PROMPT:  ", system_prompt + output_format_prompt)
+    // console.log("USER PROMPT:  ", user_prompt)
+    // console.log("THIS IS EACH QUESTION SET FOR EACH CHAPTER: ", questionOutput)
+
+  } catch (error) {
+    console.log(error)
+  }
+}
+
+export async function new_output(
+  system_prompt: string,
+  user_prompt: string | string[],
+  output_format: OutputFormat,
+  model: string = "gpt-3.5-turbo-1106",
+  num_tries: number = 3
+
+) {
+    const list_input: boolean = Array.isArray(user_prompt);
+    const dynamic_elements: boolean = /<.*?>/.test(JSON.stringify(output_format));
+    const list_output: boolean = /\[.*?\]/.test(JSON.stringify(output_format))
+    try {
+      if (list_input) {
+        let output_format_prompt: string = `\nYou are to output
+          an array of objects in the following json format: ${JSON.stringify(
+          output_format)}. \nDo not put quotation marks or escape character \\ in the output fields.`
+            const output = []
+        for (const prompt of user_prompt) {
+          // console.log("This iteration of user prompt")
+          const response = await openai.chat.completions.create({
+                messages: [
+                  {
+                    role: "system",
+                    content: system_prompt + output_format_prompt,
+                  },
+                  { role: "user", content: prompt.toString() },
+                ],
+                model: model,
+                response_format: { "type": "json_object" },
+              });
+  
+              let res: string = 
+              `${response.choices[0].message?.content}`
+              // console.log(res)
+              // response.choices[0].message?.content?.replace(/'/g, '"') ?? "";
+              // const jsonString = replaceQuotesInContent(res)
+              // console.log("Replace all doubles with single quotes: ", jsonString)
+              const unitOutput = JSON.parse(res)
+
+              console.log("THIS IS EACH QUESTION: ", unitOutput)
+              output.push(unitOutput)
+        }
+        console.log("THIS IS THE OUTPUT:", output)
+        return output
+      } else {
+        let output_format_prompt: string = `\nYou are to output
+        an object in the following json format: ${JSON.stringify(
+        output_format)}. \nDo not put quotation marks or escape character \\ in the output fields.`
+        const response = await openai.chat.completions.create({
+          messages: [
+            {
+              role: "system",
+              content: system_prompt + output_format_prompt,
+            },
+            { role: "user", content: user_prompt.toString() },
+          ],
+          model: model,
+          response_format: { "type": "json_object" },
+        });
+  
+        let res: string =
+        `${response.choices[0].message?.content}`
+        // console.log("THIS IS THE RESPONSE FOR JSON", response)
+        const unitOutput = JSON.parse(res)
+        return unitOutput
+      }
+    } catch (error) {
+      console.log(error)
+    }
+
+  
+    // for (let i = 0; i < num_tries; i++) {
+    //   let output_format_prompt: string = `\nYou are to output ${
+    //     list_output && "an array of objects in"
+    //   } the following in json format: ${JSON.stringify(
+    //     output_format
+    //   )}. \nDo not put quotation marks or escape character \\ in the output fields.`;
+    //   if (list_output) {
+    //     output_format_prompt += `\nIf output field is a list, classify output into the best element of the list.`;
+    //   }
+   
+    //   // if output_format contains dynamic elements, process it accordingly
+    //   if (dynamic_elements) {
+    //     output_format_prompt += `\nAny text enclosed by < and > indicates you must generate content to replace it. Example input: Go to <location>, Example output: Go to the garden\nAny output key containing < and > indicates you must generate the key name to replace it. Example input: {'<location>': 'description of location'}, Example output: {school: a place for education}`;
+    //   }
+   
+    //   // if input is in a list format, ask it to generate json in a list
+    //   if (list_input) {
+    //     output_format_prompt += `\nGenerate an array of json, one json for each input element.`;
+    //   }
+    //   const response = await openai.chat.completions.create({
+    //     messages: [
+    //       {
+    //         role: "system",
+    //         content: system_prompt + output_format_prompt,
+    //       },
+    //       { role: "user", content: user_prompt.toString() },
+    //     ],
+    //     model: model,
+    //     response_format: { "type": "json_object" },
+    //   });
+    //   console.log(response.choices[0].message.content)
+    //   let res: string =
+    //   response.choices[0].message?.content?.replace(/'/g, '"') ?? "";
+    //   const output = JSON.parse(res)
+    //   return list_input ? output : output[0];
+    // }
+
+}
+
 export async function strict_output(
   system_prompt: string,
   user_prompt: string | string[],
   output_format: OutputFormat,
   default_category: string = "",
   output_value_only: boolean = false,
-  model: string = "gpt-3.5-turbo",
+  model: string = "gpt-3.5-turbo-1106",
   temperature: number = 1,
   num_tries: number = 3,
   verbose: boolean = false
@@ -52,9 +229,10 @@ export async function strict_output(
     }
  
     // Use OpenAI to get a response
-    const response = await openai.createChatCompletion({
+    const response = await openai.chat.completions.create({
       temperature: temperature,
       model: model,
+      response_format: { "type": "json_object" },
       messages: [
         {
           role: "system",
@@ -65,7 +243,7 @@ export async function strict_output(
     });
  
     let res: string =
-      response.data.choices[0].message?.content?.replace(/'/g, '"') ?? "";
+      response.choices[0].message?.content?.replace(/'/g, '"') ?? "";
  
     // ensure that we don't replace away apostrophes in text
     res = res.replace(/(\w)"(\w)/g, "$1'$2");
